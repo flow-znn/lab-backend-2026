@@ -1,0 +1,93 @@
+import { z } from "zod";
+import prisma from '@/lib/prisma';
+import { Prisma } from "@prisma/client";
+import { hashPassword } from "@/utils/password";
+import { randomUUID } from "crypto";
+
+export const userSchema = z.object({
+  id: z.string().optional(),
+  name: z.string().min(1, "Name is required"),
+  email: z.string().email("Invalid email address"),
+  password: z.string().min(6, "Password must be at least 6 characters long"),
+  createdAt: z.date().optional(),
+  updatedAt: z.date().optional(),
+});
+
+export type User = z.infer<typeof userSchema>;
+
+export class UserService {
+  public async getAllUsers(params: {
+    page?: number;
+    limit?: number;
+    where?: Partial<User>;
+    orderBy?: { [key: string]: 'asc' | 'desc' };
+  }): Promise<any> {
+    const { page = 1, limit = 10 } = params;
+    const skip = (page - 1) * limit || 0;
+    const where = params.where ?
+    {
+        OR: Object.entries(params.where).map(([key, value]) => ({
+            [key]: { contains: value, mode: Prisma.QueryMode.insensitive },
+        })),
+    }
+    : {};
+    const orderBy = params.orderBy
+      ? Object.entries(params.orderBy).map(([key, value]) => ({
+          [key]: value === 'asc' ? 'asc' as const : 'desc' as const,
+        }))
+      : { createdAt: 'desc' as const };
+    const users = await prisma.user.findMany({
+        skip,
+        take: limit || 10,
+        where,
+        orderBy,
+    });
+
+    const usersWithoutPasswords = users.map(({ password, ...user }) => user);
+
+    return usersWithoutPasswords;
+  }
+
+  public async getUserById(id: string): Promise<User | null> {
+    const user = await prisma.user.findUnique({
+      where: { id },
+    });
+    return user;
+  }
+
+    public async createUser(
+        userData: Omit<User, "id" | "createdAt" | "updatedAt">
+    ): Promise<User> {
+      const parsedUserData = userSchema.parse(userData);
+      const newUser = await prisma.user.create({
+        data: {
+          ...parsedUserData,
+          id: parsedUserData.id ?? randomUUID() as string,
+          createdAt: new Date(),
+          updatedAt: new Date(),
+        },
+      });
+      return newUser;
+  }
+
+  public async updateUser(
+        id: string, 
+        userData: Partial<Omit<User, "id" | "createdAt" | "updatedAt">>
+    ): Promise<User | null> {
+    const updatedUser = await prisma.user.update({
+      where: { id },
+      data: {
+        ...userData,
+        updatedAt: new Date(),
+      },
+    });
+    return updatedUser;
+  }
+
+  public async deleteUser(id: string): Promise<boolean> {
+    await prisma.user.delete({
+      where: { id },
+    });
+    return true;
+  }
+}  
